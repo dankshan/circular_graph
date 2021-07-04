@@ -7,9 +7,6 @@ if (!("youth19_secret" %in% key_list()$service)) {
   key_set("youth19_secret")
 }
 
-
-variables <- read_csv("./data/graph_variables.csv")
-
 svy <- cyphr::decrypt(
   readRDS("../Master data/data/svydesignCombinedCalibrated.rds"),
   cyphr::key_sodium(sha256(key_get_raw("youth19_secret")))
@@ -21,7 +18,16 @@ svy <- as_survey_design(svy)
 
 svy <-
   svy %>%
-  mutate_at(vars(AccessHC), list(~if_else(Year == 2001, 0, .)))
+  mutate_at(vars(AccessHC), list(~if_else(Year == 2001, 0, .))) %>%
+  mutate_at(vars(drivenAlc), list(~case_when(Year == 2001 ~ case_when(Injury9 %in% c(3,4,5) ~ 1,
+                                                                      Injury9 %in% c(1,2) ~ 0,
+                                                                      TRUE ~ .),
+                                             
+                                             Year == c(2007, 2012) ~ 0,
+                                             TRUE ~ .)))
+
+# thoughtSuicide
+# drivenAlc
 
 
 prev <- function(group, variable, colour, name) {
@@ -43,6 +49,10 @@ prev <- function(group, variable, colour, name) {
 }
 
 
+
+variables <- read_csv("./data/graph_variables_v2.csv") %>% na.omit()
+
+
 prevs <- variables %>%
   pmap_df(
     function(var, group_name, change_colour, long_name) {
@@ -57,10 +67,12 @@ prevs2 <-
     variable = as.factor(variable),
     
     change = case_when(
-      variable %in% c("AccessHC", "unableHC") ~ round(Year2019*100 - Year2007*100,2),
-      TRUE ~ round(Year2019*100 - Year2001*100,2)),
+      variable %in% c("AccessHC", "unableHC", "attemptSuicide", "wellbeing") ~ round((Year2019 - Year2007)/Year2007*100,2),
+      TRUE ~ round((Year2019 - Year2001)/Year2001*100,2)),
   )
 
+prevs2$variable <- fct_inorder(prevs2$variable)
+prevs2$group <- fct_inorder(prevs2$group)
 
 #where to position the grouping label above the graph
 group_data <-
@@ -75,29 +87,62 @@ group_data <-
          angle2 = if_else(angle > 90 & angle < 270, angle + 180, angle)
   )
 
-prevs2$variable <- fct_inorder(prevs2$variable)
+#preserve order of variables in graph to match groups
 
 
-prevs2 %>%
+bands <-
+  tibble(
+    band0 = -90,
+    band1 = 110,
+    band2 = 115,
+    band3 = 225,
+    band4 = 270
+  )
+
+
+
+
+  prevs2 %>%
   ggplot(aes(x = variable, y = change)) +
-  geom_bar(stat = "identity", fill = "white", colour = "#dadada", aes(x = variable, y = 50), size = 1, inherit.aes = FALSE) +
-  geom_bar(stat = "identity", fill = "white", colour = "#dadada", aes(x = variable, y = -15), size = 1, inherit.aes = FALSE) +
-  geom_segment(data = group_data, aes(x = start, y = 45, xend = end, yend = 45), size = 20, colour = "#0e70b7", inherit.aes = FALSE) +
-  geom_segment(data = group_data, aes(x = start, y = 30, xend = end, yend = 30), size = 40, colour = "#dadada", inherit.aes = FALSE) +
+  
+  #background bars
+  geom_bar(stat = "identity", fill = "white", colour = "#dadada", aes(x = variable, y = bands$band0), size = 1, inherit.aes = FALSE) +
+  geom_bar(stat = "identity", fill = "white", colour = "#dadada", aes(x = variable, y = bands$band1), size = 1, inherit.aes = FALSE) +
+  
   geom_hline(yintercept = c(0), colour = "grey20") +
-  scale_color_manual(labels = c("Positive change", "No or minimal change", "Negative change"), values = c("91c017", "#9d9d9d", "#c90a0f")) +
-  scale_fill_manual(labels = c("Positive change", "No or minimal change", "Negative change"), values = c("91c017", "#9d9d9d", "#c90a0f")) +
+  
+  scale_color_manual(name = NULL, labels = c("Positive change", "No or minimal change", "Negative change"), values = c("91c017", "#9d9d9d", "#c90a0f")) +
+  scale_fill_manual(name = NULL, labels = c("Positive change", "No or minimal change", "Negative change"), values = c("91c017", "#9d9d9d", "#c90a0f")) +
+  labs(title = "Percentage change from 2001 to 2019",
+       caption = "Note: * Change from 2007 to 2019. † Among sexual active students") +
+  
+  # scale_shape_manual(labels = c("Positive change", "No or minimal change", "Negative change"), values = c(21, 21, 21))+
+  
+  # group segments and text for groups and variables
+  geom_rect(data = group_data, aes(xmin = start, ymin = bands$band2, xmax = end, ymax = bands$band3-5), fill = "#dadada", inherit.aes = FALSE) +
+  geom_text(aes(x = variable, y = bands$band3-5 -(bands$band3-5 - bands$band2)/2, label = gsub("#", "\n", name)), size = 3) +
+  
+  geom_rect(data = group_data, aes(xmin = start, ymin = bands$band3, xmax = end, ymax = bands$band4), fill = "#0e70b7", inherit.aes = FALSE) +
+  geom_text(data = group_data, aes(x = title_position, y = (bands$band4 - (bands$band4 - bands$band3)/2)-5, label = group), angle = group_data$angle2,  colour = "white", size = 4) +
+  
+  #change circle
+  geom_point(aes(x = variable, y = 115, colour = colour), size = 10) + 
+  geom_text(aes(x = variable, y = 115, label = round(change,0)), colour = "white", size = 4, fontface='bold') +
+  
+  #actual bars
   geom_bar(stat = "identity", width = 0.4, aes(fill = colour)) +
-  geom_point(aes(x = variable, y = 20, colour = colour), size = 10) + 
-  geom_text(data = group_data, aes(x = title_position, y = 45, label = group), angle = group_data$angle2,  colour = "white", size = 4, fontface='bold') +
-  geom_text(aes(x = variable, y = 20, label = round(change,0)), colour = "white", size = 4, fontface='bold') +
-  geom_text(aes(x = variable, y = 30, label = gsub("#", "\n", name)), size = 3) +
-  ylim(-20, 50) +
+  
+  ylim(-100, bands$band4) +
   theme_minimal() +
   theme(
     axis.text = element_blank(),
     axis.title = element_blank(),
-    panel.grid = element_blank()
+    panel.grid = element_blank(),
+    legend.position = "bottom",
+    plot.title.position = "plot",
+    plot.title = element_text(hjust = 0.5, size = 15, face = "bold"),
+    plot.caption = element_text(hjust = 0.5)
   ) +
   coord_polar(start = 0)
 
+ggsave("./output/y19.jpg", height = 30, dpi = "retina", units = "cm")
